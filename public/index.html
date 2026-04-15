@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>DeployWatch · Blue-Green Monitor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0d0f12;
+    --bg2: #13161b;
+    --bg3: #1a1e24;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #e8eaed;
+    --muted: #6b7280;
+    --dim: #3d4148;
+    --green: #22c55e;
+    --green-bg: rgba(34,197,94,0.1);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245,158,11,0.1);
+    --red: #ef4444;
+    --red-bg: rgba(239,68,68,0.1);
+    --blue: #3b82f6;
+    --blue-bg: rgba(59,130,246,0.1);
+    --teal: #14b8a6;
+    --font: 'IBM Plex Sans', sans-serif;
+    --mono: 'IBM Plex Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; font-size: 14px; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 0;
+  }
+  .sidebar-header {
+    padding: 20px 18px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; color: var(--text); }
+  .logo span { color: var(--teal); }
+  .logo-sub { font-size: 11px; color: var(--muted); margin-top: 3px; font-family: var(--mono); }
+
+  .nav { flex: 1; padding: 12px 8px; }
+  .nav-section { font-size: 10px; font-weight: 600; color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; padding: 12px 10px 6px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px; border-radius: 6px;
+    font-size: 13px; color: var(--muted); cursor: pointer;
+    transition: all .15s; margin-bottom: 1px;
+  }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active { background: rgba(20,184,166,0.12); color: var(--teal); }
+  .nav-icon { font-size: 13px; width: 16px; text-align: center; }
+  .nav-badge { margin-left: auto; font-size: 10px; background: var(--red-bg); color: var(--red); border-radius: 4px; padding: 1px 5px; font-family: var(--mono); }
+
+  .sidebar-footer {
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+  }
+  .region-tag { font-size: 11px; font-family: var(--mono); color: var(--muted); }
+  .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 5px; }
+
+  /* ── Main ── */
+  .main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; background: var(--bg); }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    background: var(--bg); position: sticky; top: 0; z-index: 10;
+  }
+  .page-title { font-size: 15px; font-weight: 600; }
+  .page-sub { font-size: 12px; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .btn { padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border2); background: var(--bg3); color: var(--text); font-family: var(--font); transition: all .15s; }
+  .btn:hover { border-color: var(--teal); color: var(--teal); }
+  .btn-primary { background: var(--teal); color: #000; border-color: var(--teal); font-weight: 600; }
+  .btn-primary:hover { opacity: .85; color: #000; }
+  .btn-danger { border-color: var(--red); color: var(--red); }
+  .btn-danger:hover { background: var(--red-bg); }
+
+  /* ── Content ── */
+  .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* ── Cluster cards ── */
+  .cluster-row { display: grid; grid-template-columns: 1fr 120px 1fr; gap: 16px; align-items: center; }
+  .cluster-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px;
+    transition: border-color .2s;
+  }
+  .cluster-card.is-active { border-color: var(--green); }
+  .cluster-card.is-beta-active { border-color: var(--amber); }
+  .cluster-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+  .cluster-name { font-size: 13px; font-weight: 600; }
+  .cluster-version { font-size: 11px; color: var(--muted); margin-top: 3px; font-family: var(--mono); }
+  .badge { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; font-family: var(--mono); }
+  .badge-live { background: var(--green-bg); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+  .badge-beta { background: var(--amber-bg); color: var(--amber); border: 1px solid rgba(245,158,11,0.2); }
+  .badge-standby { background: var(--bg3); color: var(--muted); border: 1px solid var(--border); }
+  .cluster-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat-item { background: var(--bg3); border-radius: 6px; padding: 8px 10px; }
+  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .stat-value { font-size: 16px; font-weight: 600; margin-top: 3px; font-family: var(--mono); }
+  .stat-value.green { color: var(--green); }
+  .stat-value.amber { color: var(--amber); }
+  .stat-value.red { color: var(--red); }
+
+  /* Switch center */
+  .switch-center { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .switch-center-label { font-size: 11px; color: var(--muted); text-align: center; font-family: var(--mono); }
+  .switch-big-btn {
+    width: 88px; height: 36px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--teal), #0891b2);
+    color: #000; font-weight: 700; font-size: 12px;
+    border: none; cursor: pointer; font-family: var(--font);
+    transition: opacity .15s; letter-spacing: 0.02em;
+  }
+  .switch-big-btn:hover { opacity: .85; }
+  .switch-big-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* URL bar */
+  .url-bar {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+  }
+  .url-domain { color: var(--text); }
+  .url-param { background: var(--amber-bg); color: var(--amber); border-radius: 4px; padding: 1px 6px; border: 1px solid rgba(245,158,11,0.2); font-size: 10px; }
+  .url-arrow { color: var(--teal); font-size: 11px; }
+
+  /* ── Section headers ── */
+  .section-header { display: flex; align-items: center; justify-content: space-between; }
+  .section-title { font-size: 13px; font-weight: 600; color: var(--text); }
+  .section-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ── Observability grid ── */
+  .obs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .obs-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .obs-card-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 14px; }
+
+  /* Node circles */
+  .nodes-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
+  .node-c {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 7px; font-weight: 600; font-family: var(--mono);
+    cursor: default; position: relative; transition: transform .1s;
+  }
+  .node-c:hover { transform: scale(1.3); z-index: 5; }
+  .node-legend { display: flex; gap: 12px; margin-top: 10px; }
+  .node-legend-item { font-size: 10px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+  .leg-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* Bar charts */
+  .bar-list { display: flex; flex-direction: column; gap: 7px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; }
+  .bar-lbl { font-size: 11px; color: var(--muted); font-family: var(--mono); width: 56px; text-align: right; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 10px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+  .bar-num { font-size: 11px; color: var(--muted); font-family: var(--mono); width: 36px; }
+
+  /* ── Logs ── */
+  .logs-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .logs-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+  .ctrl-input {
+    height: 30px; padding: 0 10px; border-radius: 6px;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); font-size: 12px; font-family: var(--font);
+  }
+  .ctrl-input::placeholder { color: var(--dim); }
+  .ctrl-input:focus { outline: none; border-color: var(--teal); }
+  .ctrl-select {
+    height: 30px; padding: 0 8px; border-radius: 6px;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); font-size: 12px; font-family: var(--font);
+  }
+  .auto-toggle { display: flex; align-items: center; gap: 6px; margin-left: auto; cursor: pointer; }
+  .toggle-pill { width: 32px; height: 18px; border-radius: 9px; background: var(--dim); position: relative; transition: background .2s; flex-shrink: 0; }
+  .toggle-pill.on { background: var(--teal); }
+  .toggle-pill::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:transform .2s; }
+  .toggle-pill.on::after { transform:translateX(14px); }
+  .auto-lbl { font-size: 11px; color: var(--muted); }
+
+  .log-stream {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px;
+    font-family: var(--mono); font-size: 11px;
+    height: 180px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .log-stream::-webkit-scrollbar { width: 4px; }
+  .log-stream::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 2px; }
+  .ll { display: flex; gap: 8px; }
+  .ll-ts { color: var(--dim); flex-shrink: 0; }
+  .ll-cluster { flex-shrink: 0; }
+  .ll-prod { color: var(--blue); }
+  .ll-beta { color: var(--amber); }
+  .ll-msg { color: var(--muted); }
+  .ll-ok { color: var(--green); }
+  .ll-err { color: var(--red); }
+  .ll-warn { color: var(--amber); }
+
+  /* ── Bottom row ── */
+  .bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 14px; }
+
+  /* Deploy log */
+  .deploy-log { font-family: var(--mono); font-size: 11px; display: flex; flex-direction: column; gap: 4px; }
+  .dl-row { display: flex; gap: 8px; align-items: flex-start; padding: 5px 8px; border-radius: 4px; }
+  .dl-row.ok { background: rgba(34,197,94,0.05); }
+  .dl-row.warn { background: rgba(245,158,11,0.05); }
+  .dl-row.err { background: rgba(239,68,68,0.05); }
+  .dl-sym { width: 14px; flex-shrink: 0; }
+  .dl-txt { color: var(--muted); }
+  .dl-txt span { color: var(--text); }
+
+  /* Alarms */
+  .alarm-list { display: flex; flex-direction: column; gap: 6px; }
+  .alarm-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; background: var(--bg3);
+    border-radius: 6px; border: 1px solid var(--border);
+  }
+  .alarm-state { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .alarm-name { font-size: 12px; font-family: var(--mono); flex: 1; color: var(--text); }
+  .alarm-val { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .alarm-badge { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; font-family: var(--mono); }
+  .a-ok { background: var(--green-bg); color: var(--green); }
+  .a-alarm { background: var(--red-bg); color: var(--red); }
+  .a-insuf { background: var(--bg3); color: var(--dim); }
+
+  .add-alarm-row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* Scrollbar */
+  .main::-webkit-scrollbar { width: 6px; }
+  .main::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="sidebar-header">
+    <div class="logo">Deploy<span>Watch</span></div>
+    <div class="logo-sub">blue-green · fargate</div>
+  </div>
+  <nav class="nav">
+    <div class="nav-section">Clusters</div>
+    <div class="nav-item active"><span class="nav-icon">⬡</span> Deployments</div>
+    <div class="nav-item"><span class="nav-icon">◎</span> Observability</div>
+    <div class="nav-section">Monitoring</div>
+    <div class="nav-item"><span class="nav-icon">≡</span> Logs</div>
+    <div class="nav-item"><span class="nav-icon">△</span> Alarms <span class="nav-badge" id="alarm-count">1</span></div>
+    <div class="nav-section">CI/CD</div>
+    <div class="nav-item"><span class="nav-icon">⑂</span> GitHub</div>
+    <div class="nav-item"><span class="nav-icon">▷</span> Deploy history</div>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="region-tag">us-east-1 · VPC</div>
+    <div style="margin-top:6px;font-size:11px;color:var(--green)"><span class="status-dot"></span>Systems operational</div>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <!-- Topbar -->
+  <div class="topbar">
+    <div>
+      <div class="page-title">Blue-Green Deployments</div>
+      <div class="page-sub">ALB listener routing · Fargate ECS</div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn" onclick="refreshAll()">↻ Refresh</button>
+      <button class="btn btn-primary" onclick="setupAlarms()">Setup alarms</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- URL routing bar -->
+    <div class="url-bar">
+      <span style="color:var(--muted);font-size:10px">ALB DNS →</span>
+      <span class="url-domain">usertrack-alb-1652885101.us-east-1.elb.amazonaws.com</span>
+      <span class="url-param" id="url-param">?betaversion</span>
+      <span class="url-arrow">→</span>
+      <span id="url-routing-label" style="font-size:11px;color:var(--teal)">Cluster 3 (beta)</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--muted)">default →</span>
+      <span style="font-size:11px;color:var(--green)">Cluster 2 (prod)</span>
+    </div>
+
+    <!-- Cluster cards -->
+    <div>
+      <div class="section-header" style="margin-bottom:12px">
+        <div><div class="section-title">Cluster routing</div><div class="section-sub">Click "Switch" to swap ALB listener rule in real time</div></div>
+        <span id="switch-status" style="font-size:11px;color:var(--muted);font-family:var(--mono)">prod → C2 · beta → C3</span>
+      </div>
+      <div class="cluster-row">
+        <!-- Cluster 2 Prod -->
+        <div class="cluster-card is-active" id="c2-card">
+          <div class="cluster-header">
+            <div><div class="cluster-name">Cluster 2 · Production</div><div class="cluster-version">v1.2 · source: main</div></div>
+            <span class="badge badge-live" id="c2-badge">LIVE</span>
+          </div>
+          <div class="cluster-stats">
+            <div class="stat-item"><div class="stat-label">Nodes</div><div class="stat-value green">80</div></div>
+            <div class="stat-item"><div class="stat-label">Memory</div><div class="stat-value">6 GB</div></div>
+            <div class="stat-item"><div class="stat-label">CPU avg</div><div class="stat-value amber" id="c2-cpu">—</div></div>
+          </div>
+        </div>
+
+        <!-- Switch center -->
+        <div class="switch-center">
+          <button class="switch-big-btn" id="switch-btn" onclick="doSwitch()">SWITCH</button>
+          <div class="switch-center-label" id="switch-label">zero-downtime<br>ALB swap</div>
+        </div>
+
+        <!-- Cluster 3 Beta -->
+        <div class="cluster-card" id="c3-card">
+          <div class="cluster-header">
+            <div><div class="cluster-name">Cluster 3 · Beta</div><div class="cluster-version">v1.3 · source: main</div></div>
+            <span class="badge badge-beta" id="c3-badge">BETA</span>
+          </div>
+          <div class="cluster-stats">
+            <div class="stat-item"><div class="stat-label">Nodes</div><div class="stat-value">100</div></div>
+            <div class="stat-item"><div class="stat-label">Memory</div><div class="stat-value">6 GB</div></div>
+            <div class="stat-item"><div class="stat-label">CPU avg</div><div class="stat-value" id="c3-cpu">—</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Observability -->
+    <div>
+      <div class="section-header" style="margin-bottom:12px">
+        <div><div class="section-title">Observability</div></div>
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono)" id="obs-updated">updating...</div>
+      </div>
+      <div class="obs-grid">
+        <!-- Node health -->
+        <div class="obs-card">
+          <div class="obs-card-title">Node health · CPU %</div>
+          <div class="nodes-wrap" id="nodes-wrap"></div>
+          <div class="node-legend">
+            <div class="node-legend-item"><div class="leg-dot" style="background:var(--green)"></div>&lt;50%</div>
+            <div class="node-legend-item"><div class="leg-dot" style="background:var(--amber)"></div>50-75%</div>
+            <div class="node-legend-item"><div class="leg-dot" style="background:var(--red)"></div>&gt;75%</div>
+          </div>
+        </div>
+
+        <!-- DB ACLs -->
+        <div class="obs-card">
+          <div class="obs-card-title">Serverless DB ACLs</div>
+          <div class="bar-list" id="acl-bars">
+            <div class="bar-row"><div class="bar-lbl">acl-prod</div><div class="bar-track"><div class="bar-fill" style="width:78%;background:var(--green)"></div></div><div class="bar-num">78</div></div>
+            <div class="bar-row"><div class="bar-lbl">acl-beta</div><div class="bar-track"><div class="bar-fill" style="width:45%;background:var(--green)"></div></div><div class="bar-num">45</div></div>
+            <div class="bar-row"><div class="bar-lbl">acl-read</div><div class="bar-track"><div class="bar-fill" style="width:92%;background:var(--amber)"></div></div><div class="bar-num">92</div></div>
+            <div class="bar-row"><div class="bar-lbl">acl-write</div><div class="bar-track"><div class="bar-fill" style="width:31%;background:var(--green)"></div></div><div class="bar-num">31</div></div>
+            <div class="bar-row"><div class="bar-lbl">acl-admin</div><div class="bar-track"><div class="bar-fill" style="width:12%;background:var(--green)"></div></div><div class="bar-num">12</div></div>
+          </div>
+        </div>
+
+        <!-- Active Valkeys -->
+        <div class="obs-card">
+          <div class="obs-card-title">Active Valkeys (ElastiCache)</div>
+          <div class="bar-list">
+            <div class="bar-row"><div class="bar-lbl">shard-0</div><div class="bar-track"><div class="bar-fill" style="width:88%;background:var(--blue)"></div></div><div class="bar-num">88k</div></div>
+            <div class="bar-row"><div class="bar-lbl">shard-1</div><div class="bar-track"><div class="bar-fill" style="width:65%;background:var(--blue)"></div></div><div class="bar-num">65k</div></div>
+            <div class="bar-row"><div class="bar-lbl">shard-2</div><div class="bar-track"><div class="bar-fill" style="width:71%;background:var(--blue)"></div></div><div class="bar-num">71k</div></div>
+            <div class="bar-row"><div class="bar-lbl">shard-3</div><div class="bar-track"><div class="bar-fill" style="width:43%;background:var(--blue)"></div></div><div class="bar-num">43k</div></div>
+            <div class="bar-row"><div class="bar-lbl">replica</div><div class="bar-track"><div class="bar-fill" style="width:55%;background:var(--teal)"></div></div><div class="bar-num">55k</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CloudWatch Logs -->
+    <div>
+      <div class="section-header" style="margin-bottom:12px">
+        <div><div class="section-title">CloudWatch Logs</div></div>
+      </div>
+      <div class="logs-card">
+        <div class="logs-controls">
+          <select class="ctrl-select" id="log-timeframe">
+            <option value="1h">Last 1h</option>
+            <option value="6h">Last 6h</option>
+            <option value="24h">Last 24h</option>
+            <option value="7d">Last 7d</option>
+          </select>
+          <select class="ctrl-select" id="log-cluster">
+            <option value="all">All clusters</option>
+            <option value="prod">Prod only</option>
+            <option value="beta">Beta only</option>
+          </select>
+          <input class="ctrl-input" id="log-org" placeholder="org..." style="width:80px">
+          <input class="ctrl-input" id="log-user" placeholder="user..." style="width:80px">
+          <input class="ctrl-input" id="log-session" placeholder="session..." style="width:90px">
+          <input class="ctrl-input" id="log-text" placeholder="search text..." style="flex:1;min-width:120px">
+          <button class="btn" onclick="searchLogs()">Search</button>
+          <div class="auto-toggle" onclick="toggleAuto()">
+            <span class="auto-lbl">Auto</span>
+            <div class="toggle-pill on" id="auto-pill"></div>
+          </div>
+        </div>
+        <div class="log-stream" id="log-stream"></div>
+      </div>
+    </div>
+
+    <!-- Bottom row: Deploy log + Alarms -->
+    <div class="bottom-row">
+      <!-- GitHub deploys -->
+      <div class="card">
+        <div class="card-title">GitHub · Deploy log</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <select class="ctrl-select" id="deploy-target">
+            <option value="beta">→ Cluster 3 (beta)</option>
+            <option value="prod">→ Cluster 2 (prod)</option>
+          </select>
+          <input class="ctrl-input" id="deploy-sha" placeholder="commit SHA (optional)" style="flex:1">
+          <button class="btn btn-primary" onclick="manualDeploy()">Deploy now</button>
+        </div>
+        <div class="deploy-log" id="deploy-log">
+          <div class="dl-row ok"><span class="dl-sym" style="color:var(--green)">✓</span><span class="dl-txt">Webhook connected · <span>main branch</span></span></div>
+          <div class="dl-row ok"><span class="dl-sym" style="color:var(--green)">✓</span><span class="dl-txt">Last push: <span>main@a3f22bc</span> by user</span></div>
+          <div class="dl-row ok"><span class="dl-sym" style="color:var(--green)">✓</span><span class="dl-txt">Task def registered: <span>v1.3-rev42</span></span></div>
+          <div class="dl-row warn"><span class="dl-sym" style="color:var(--amber)">⚡</span><span class="dl-txt">ALB health: <span>97/100 healthy</span></span></div>
+          <div class="dl-row ok"><span class="dl-sym" style="color:var(--green)">✓</span><span class="dl-txt">Service updated: <span>cluster-3 RUNNING</span></span></div>
+        </div>
+      </div>
+
+      <!-- Alarms -->
+      <div class="card">
+        <div class="card-title">CloudWatch Alarms</div>
+        <div class="alarm-list" id="alarm-list">
+          <div class="alarm-row"><div class="alarm-state" style="background:var(--green)"></div><div class="alarm-name">prod-cpu-high</div><div class="alarm-val">&gt;80%</div><span class="alarm-badge a-ok">OK</span></div>
+          <div class="alarm-row"><div class="alarm-state" style="background:var(--green)"></div><div class="alarm-name">prod-5xx-rate</div><div class="alarm-val">&gt;10/min</div><span class="alarm-badge a-ok">OK</span></div>
+          <div class="alarm-row"><div class="alarm-state" style="background:var(--green)"></div><div class="alarm-name">prod-p99-latency</div><div class="alarm-val">&gt;2s</div><span class="alarm-badge a-ok">OK</span></div>
+          <div class="alarm-row"><div class="alarm-state" style="background:var(--red)"></div><div class="alarm-name">prod-memory-high</div><div class="alarm-val">&gt;85%</div><span class="alarm-badge a-alarm">ALARM</span></div>
+          <div class="alarm-row"><div class="alarm-state" style="background:var(--green)"></div><div class="alarm-name">beta-cpu-high</div><div class="alarm-val">&gt;80%</div><span class="alarm-badge a-ok">OK</span></div>
+          <div class="alarm-row"><div class="alarm-state" style="background:var(--green)"></div><div class="alarm-name">beta-5xx-rate</div><div class="alarm-val">&gt;10/min</div><span class="alarm-badge a-ok">OK</span></div>
+        </div>
+        <div class="add-alarm-row">
+          <input class="ctrl-input" id="new-alarm-name" placeholder="alarm name" style="flex:1">
+          <input class="ctrl-input" id="new-alarm-threshold" placeholder="threshold" style="width:80px">
+          <button class="btn" onclick="addAlarm()">+ Add</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<script>
+// ─── State ───────────────────────────────────
+let routedToBeta = true; // ?betaversion currently hits beta cluster
+let autoFetch = true;
+let logInterval = null;
+const nodes = Array.from({length: 36}, (_, i) => ({id: i+1, cpu: Math.floor(Math.random()*70)+10}));
+
+// ─── Node circles ────────────────────────────
+function renderNodes() {
+  const wrap = document.getElementById('nodes-wrap');
+  wrap.innerHTML = '';
+  nodes.forEach(n => {
+    const color = n.cpu < 50 ? 'var(--green)' : n.cpu < 75 ? 'var(--amber)' : 'var(--red)';
+    const bg = n.cpu < 50 ? 'rgba(34,197,94,0.12)' : n.cpu < 75 ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)';
+    const d = document.createElement('div');
+    d.className = 'node-c';
+    d.title = `node-${n.id}: ${n.cpu}% CPU`;
+    d.style.cssText = `background:${bg};border:1px solid ${color};color:${color}`;
+    d.textContent = n.cpu;
+    wrap.appendChild(d);
+  });
+  // Update cluster avg CPU
+  const avg2 = Math.round(nodes.slice(0,20).reduce((a,n)=>a+n.cpu,0)/20);
+  const avg3 = Math.round(nodes.slice(20).reduce((a,n)=>a+n.cpu,0)/16);
+  const c2el = document.getElementById('c2-cpu');
+  c2el.textContent = avg2 + '%';
+  c2el.className = 'stat-value ' + (avg2 > 75 ? 'red' : avg2 > 50 ? 'amber' : 'green');
+  const c3el = document.getElementById('c3-cpu');
+  c3el.textContent = avg3 + '%';
+  c3el.className = 'stat-value ' + (avg3 > 75 ? 'red' : avg3 > 50 ? 'amber' : 'green');
+  document.getElementById('obs-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+}
+renderNodes();
+setInterval(() => {
+  nodes.forEach(n => { n.cpu = Math.max(5, Math.min(95, n.cpu + Math.round((Math.random()-.5)*12))); });
+  renderNodes();
+}, 3000);
+
+// ─── Traffic switch ───────────────────────────
+function doSwitch() {
+  const btn = document.getElementById('switch-btn');
+  btn.disabled = true; btn.textContent = '...';
+  
+  // In production: fetch('/api/clusters/switch', {method:'POST', body:JSON.stringify({target: routedToBeta ? 'prod' : 'beta'}), headers:{'Content-Type':'application/json'}})
+  setTimeout(() => {
+    routedToBeta = !routedToBeta;
+    const c2 = document.getElementById('c2-card');
+    const c3 = document.getElementById('c3-card');
+    const c2b = document.getElementById('c2-badge');
+    const c3b = document.getElementById('c3-badge');
+    const urlLabel = document.getElementById('url-routing-label');
+
+    if (routedToBeta) {
+      c2.className = 'cluster-card is-active'; c3.className = 'cluster-card';
+      c2b.className = 'badge badge-live'; c2b.textContent = 'LIVE';
+      c3b.className = 'badge badge-beta'; c3b.textContent = 'BETA';
+      urlLabel.textContent = 'Cluster 3 (beta)'; urlLabel.style.color = 'var(--amber)';
+      document.getElementById('switch-status').textContent = 'prod → C2 · beta → C3';
+    } else {
+      c2.className = 'cluster-card'; c3.className = 'cluster-card is-beta-active';
+      c2b.className = 'badge badge-standby'; c2b.textContent = 'STANDBY';
+      c3b.className = 'badge badge-live'; c3b.textContent = 'LIVE';
+      urlLabel.textContent = 'Cluster 2 (prod)'; urlLabel.style.color = 'var(--green)';
+      document.getElementById('switch-status').textContent = '?betaversion → C2 (rollback)';
+    }
+
+    addDeployLog('ok', '✓', `ALB rule updated → ${routedToBeta ? 'beta:C3' : 'prod:C2'}`);
+    btn.disabled = false; btn.textContent = 'SWITCH';
+  }, 1200);
+}
+
+// ─── Logs ─────────────────────────────────────
+const SAMPLE_LOGS = [
+  ['prod','ok','GET /api/user/track 200 11ms'],
+  ['beta','ok','POST /api/session/start 201 44ms'],
+  ['prod','warn','WARN mem 81% node-07'],
+  ['beta','ok','GET /api/feature/v1.3 200 8ms'],
+  ['prod','err','ERR timeout db.query org=acme user=u_882'],
+  ['prod','ok','GET /healthcheck 200 1ms'],
+  ['beta','ok','PUT /api/user/prefs 200 19ms'],
+  ['prod','ok','DELETE /api/session/8812 204 22ms'],
+  ['beta','warn','WARN cold start task-id=f9a2 88ms'],
+];
+let logIdx = 0;
+
+function addLog(cluster, level, msg) {
+  const stream = document.getElementById('log-stream');
+  const ts = new Date().toLocaleTimeString('en-US',{hour12:false});
+  const div = document.createElement('div');
+  div.className = 'll';
+  div.innerHTML = `<span class="ll-ts">${ts}</span><span class="ll-cluster ll-${cluster}">[${cluster}]</span><span class="ll-${level} ll-msg">${msg}</span>`;
+  stream.appendChild(div);
+  stream.scrollTop = stream.scrollHeight;
+  if (stream.children.length > 60) stream.removeChild(stream.firstChild);
+}
+
+// Populate initial logs
+SAMPLE_LOGS.forEach(([c,l,m]) => addLog(c,l,m));
+
+function startAutoFetch() {
+  if (logInterval) return;
+  logInterval = setInterval(() => {
+    if (!autoFetch) return;
+    const [c,l,m] = SAMPLE_LOGS[logIdx % SAMPLE_LOGS.length]; logIdx++;
+    addLog(c, l, m);
+  }, 2500);
+}
+startAutoFetch();
+
+function toggleAuto() {
+  autoFetch = !autoFetch;
+  document.getElementById('auto-pill').className = 'toggle-pill' + (autoFetch ? ' on' : '');
+}
+
+function searchLogs() {
+  const stream = document.getElementById('log-stream');
+  const text = document.getElementById('log-text').value.toLowerCase();
+  const cluster = document.getElementById('log-cluster').value;
+  const org = document.getElementById('log-org').value;
+  // In production: fetch(`/api/logs/search?text=${text}&cluster=${cluster}&org=${org}&...`)
+  addLog('prod','ok',`[search] Querying CW Logs: text="${text}" cluster=${cluster} org="${org}"...`);
+}
+
+// ─── Deploy log ───────────────────────────────
+function addDeployLog(type, sym, txt) {
+  const el = document.getElementById('deploy-log');
+  const div = document.createElement('div');
+  div.className = `dl-row ${type}`;
+  div.innerHTML = `<span class="dl-sym" style="color:var(--${type==='ok'?'green':type==='warn'?'amber':'red'})">${sym}</span><span class="dl-txt">${txt}</span>`;
+  el.insertBefore(div, el.firstChild);
+  if (el.children.length > 8) el.removeChild(el.lastChild);
+}
+
+function manualDeploy() {
+  const target = document.getElementById('deploy-target').value;
+  const sha = document.getElementById('deploy-sha').value || 'latest';
+  // In production: fetch('/webhook/github/deploy-manual', {method:'POST', body:JSON.stringify({target,commitSha:sha}), headers:{'Content-Type':'application/json'}})
+  addDeployLog('ok','✓',`Deploy triggered → <span>${target} cluster · ${sha.slice(0,7)}</span>`);
+  setTimeout(()=>addDeployLog('ok','✓',`Task def registered for ${target}`), 1500);
+  setTimeout(()=>addDeployLog('ok','✓',`ECS service update initiated · RUNNING`), 3000);
+}
+
+// ─── Alarms ───────────────────────────────────
+function addAlarm() {
+  const name = document.getElementById('new-alarm-name').value.trim();
+  const threshold = document.getElementById('new-alarm-threshold').value.trim();
+  if (!name) return;
+  // In production: fetch('/api/alarms', {method:'POST', body:JSON.stringify({name, threshold}), headers:{'Content-Type':'application/json'}})
+  const list = document.getElementById('alarm-list');
+  const div = document.createElement('div');
+  div.className = 'alarm-row';
+  div.innerHTML = `<div class="alarm-state" style="background:var(--dim)"></div><div class="alarm-name">${name}</div><div class="alarm-val">${threshold ? '&gt;'+threshold : ''}</div><span class="alarm-badge a-insuf">PENDING</span>`;
+  list.appendChild(div);
+  document.getElementById('new-alarm-name').value = '';
+  document.getElementById('new-alarm-threshold').value = '';
+}
+
+function setupAlarms() {
+  // In production: fetch('/api/alarms/presets', {method:'POST', body:JSON.stringify({snsTopicArn: '...'}), headers:{'Content-Type':'application/json'}})
+  addLog('prod','ok','[alarms] Running preset alarm setup via CloudWatch API...');
+}
+
+function refreshAll() {
+  nodes.forEach(n => { n.cpu = Math.floor(Math.random()*75)+10; });
+  renderNodes();
+  addLog('prod','ok','[refresh] Fetching latest cluster metrics...');
+}
+</script>
+</body>
+</html>
