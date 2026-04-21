@@ -1,0 +1,21 @@
+# AWS Configuration
+aws_region = "us-east-1"
+
+# GitHub Configuration (Source repository - IaC + buildspec only)
+# Create PAT at: https://github.com/settings/tokens
+# Required scopes: repo, workflow
+github_token = "YOUR_GITHUB_PAT_HERE"
+github_owner = "amruthkumartj"
+github_repo = "new-beta-pipeline"
+
+# AWS CodeCommit Configuration (Private app code repository)
+# This is where your actual deploy-watch app code lives (NOT in GitHub)
+codecommit_repo_name = "uat-benevolate-beta"
+
+# ECS Configuration
+ecs_cluster_name = "uat-benevolate-beta"
+ecs_service_name = "deploy-watch-app"
+ecs_container_name = "deploywatch"
+
+# ECR Configuration
+ecr_repository_name = "amruthkumartj/deploy-watch"
