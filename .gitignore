@@ -1,0 +1,23 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+!terraform.tfvars.example
+
+# Node
+node_modules/
+npm-debug.log
+
+# IDE
+.vscode/
+.DS_Store
+
+# OS
+Thumbs.db
+*.swp
+
+# Binaries
+AWSCLIV2.msi
+terraform_*.zip
