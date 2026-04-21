@@ -21,3 +21,5 @@ Thumbs.db
 # Binaries
 AWSCLIV2.msi
 terraform_*.zip
+
+deploy-watch

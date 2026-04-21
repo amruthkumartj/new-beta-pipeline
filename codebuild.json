@@ -1,0 +1,29 @@
+{
+  "name": "deploywatch-beta-build",
+  "description": "Build Docker image for deploy-watch",
+  "source": {
+    "type": "CODEPIPELINE",
+    "buildspec": "version: 0.2\nphases:\n  pre_build:\n    commands:\n      - echo Logging in to Amazon ECR...\n      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com\n      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME\n      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)\n      - IMAGE_TAG=${COMMIT_HASH:=latest}\n  build:\n    commands:\n      - echo Build started on `date`\n      - docker build -t $REPOSITORY_URI:latest .\n      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG\n  post_build:\n    commands:\n      - echo Build completed on `date`\n      - docker push $REPOSITORY_URI:latest\n      - docker push $REPOSITORY_URI:$IMAGE_TAG\n      - printf \"[{\\\"name\\\":\\\"deploywatch\\\",\\\"imageUri\\\":\\\"%s\\\"}]\" $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json\nartifacts:\n  files:\n    - imagedefinitions.json"
+  },
+  "artifacts": {
+    "type": "CODEPIPELINE"
+  },
+  "environment": {
+    "type": "LINUX_CONTAINER",
+    "computeType": "BUILD_GENERAL1_SMALL",
+    "image": "aws/codebuild/standard:5.0",
+    "environmentVariables": [
+      {"name": "AWS_ACCOUNT_ID", "value": "393886308751", "type": "PLAINTEXT"},
+      {"name": "AWS_DEFAULT_REGION", "value": "us-east-1", "type": "PLAINTEXT"},
+      {"name": "IMAGE_REPO_NAME", "value": "amruthkumartj/deploy-watch", "type": "PLAINTEXT"}
+    ],
+    "privilegedMode": true
+  },
+  "serviceRole": "arn:aws:iam::393886308751:role/codebuild-amruthkumartj-deploy-watch-role",
+  "logsConfig": {
+    "cloudWatchLogs": {
+      "status": "ENABLED",
+      "groupName": "/aws/codebuild/deploywatch-beta-build"
+    }
+  }
+}
