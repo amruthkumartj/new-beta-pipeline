@@ -114,6 +114,7 @@ resource "aws_iam_role_policy" "codepipeline_codebuild_policy" {
 data "aws_iam_policy_document" "codepipeline_codebuild" {
   statement {
     actions = [
+      "codebuild:StartBuild",
       "codebuild:BatchGetBuilds",
       "codebuild:BatchGetReports",
       "codebuild:List*",
