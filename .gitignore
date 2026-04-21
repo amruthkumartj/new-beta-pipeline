@@ -22,4 +22,13 @@ Thumbs.db
 AWSCLIV2.msi
 terraform_*.zip
 
-deploy-watch
+# Local AWS CLI scratch files (do not commit)
+pipeline.json
+codebuild.json
+codebuild-project.json
+codebuild-s3-policy.json
+ecr-policy.json
+builds.txt
+
+# App source should stay outside this GitHub IaC repo
+deploy-watch/
