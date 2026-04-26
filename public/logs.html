@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeployWatch | Logs</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #101014;
+    --bg2: #181822;
+    --panel: #1f1f2a;
+    --line: rgba(255,255,255,0.12);
+    --text: #f4f4f7;
+    --muted: #9e9ea9;
+    --teal: #14b8a6;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --green: #22c55e;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Space Grotesk', sans-serif;
+    background: radial-gradient(circle at 100% 0, rgba(20,184,166,0.14), transparent 45%), var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  .top {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--line);
+    background: rgba(16, 16, 20, 0.94);
+    backdrop-filter: blur(5px);
+    padding: 12px 16px;
+  }
+
+  .title { font-size: 20px; font-weight: 700; }
+  .sub { font-size: 12px; color: var(--muted); }
+  .spacer { flex: 1; }
+
+  .btn, .field, select {
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+    padding: 0 10px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+
+  .btn { cursor: pointer; font-weight: 600; }
+  .btn.primary { background: linear-gradient(135deg, var(--teal), #0d9488); border: 0; color: #081311; }
+
+  .wrap { padding: 14px 16px 20px; }
+  .filters {
+    background: var(--bg2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .f { display: flex; flex-direction: column; gap: 5px; }
+  .f label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; }
+  .f.full { grid-column: span 12; }
+  .f.c2 { grid-column: span 2; }
+  .f.c3 { grid-column: span 3; }
+
+  .stats {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .stat {
+    background: var(--bg2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+  .stat .v { font-size: 24px; font-weight: 700; margin-top: 3px; }
+
+  .table-wrap {
+    margin-top: 12px;
+    background: var(--bg2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: #242432;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 10px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+  }
+
+  tbody td {
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    padding: 8px;
+    vertical-align: top;
+  }
+  tbody tr:hover { background: rgba(20,184,166,0.08); }
+
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .msg { white-space: pre-wrap; word-break: break-word; }
+  .lvl { font-weight: 700; }
+  .lvl.error { color: var(--red); }
+  .lvl.warn { color: var(--amber); }
+  .lvl.info { color: var(--green); }
+
+  @media (max-width: 1100px) {
+    .f.c2, .f.c3 { grid-column: span 6; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <div class="title">Logs Explorer</div>
+      <div class="sub" id="status">Run a search to load full-page logs view</div>
+    </div>
+    <div class="spacer"></div>
+    <a href="/" class="btn" style="text-decoration:none;display:inline-flex;align-items:center;">Back</a>
+    <a href="/observability.html" class="btn" style="text-decoration:none;display:inline-flex;align-items:center;">Observability</a>
+    <a href="/alarms.html" class="btn" style="text-decoration:none;display:inline-flex;align-items:center;">Alarms</a>
+  </div>
+
+  <div class="wrap">
+    <div class="filters">
+      <div class="f c2"><label>Timeframe</label><select id="timeframe"><option value="1h">1h</option><option value="6h">6h</option><option value="24h" selected>24h</option><option value="7d">7d</option></select></div>
+      <div class="f c2"><label>Cluster</label><select id="cluster"><option value="all">all</option><option value="prod">prod</option><option value="beta">beta</option></select></div>
+      <div class="f c2"><label>Level</label><select id="level"><option value="">any</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select></div>
+      <div class="f c2"><label>Sort</label><select id="sort"><option value="desc">newest first</option><option value="asc">oldest first</option></select></div>
+      <div class="f c2"><label>Limit</label><input class="field" id="limit" type="number" min="1" max="500" value="250" /></div>
+      <div class="f c2"><label>Stream Prefix</label><input class="field" id="streamPrefix" placeholder="ecs/app" /></div>
+
+      <div class="f c2"><label>Org</label><input class="field" id="org" placeholder="acme" /></div>
+      <div class="f c2"><label>User</label><input class="field" id="user" placeholder="user-123" /></div>
+      <div class="f c2"><label>Session</label><input class="field" id="session" placeholder="sess-xyz" /></div>
+      <div class="f c3"><label>Log Group (comma separated)</label><input class="field" id="logGroup" placeholder="/ecs/service-a,/ecs/service-b" /></div>
+      <div class="f c3"><label>Text Contains</label><input class="field" id="text" placeholder="timeout or error code" /></div>
+
+      <div class="f c3"><label>Start (optional)</label><input class="field" id="start" type="datetime-local" /></div>
+      <div class="f c3"><label>End (optional)</label><input class="field" id="end" type="datetime-local" /></div>
+      <div class="f c3"><label>Client Side Filter</label><input class="field" id="clientFilter" placeholder="filter loaded rows" /></div>
+      <div class="f c3" style="justify-content:flex-end;">
+        <label>Actions</label>
+        <div style="display:flex;gap:8px;">
+          <button class="btn primary" id="run">Search</button>
+          <button class="btn" id="live">Enable Auto Refresh</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="k">Results</div><div class="v mono" id="st-results">0</div></div>
+      <div class="stat"><div class="k">Errors</div><div class="v mono" id="st-errors">0</div></div>
+      <div class="stat"><div class="k">Warnings</div><div class="v mono" id="st-warns">0</div></div>
+      <div class="stat"><div class="k">Log Groups</div><div class="v mono" id="st-groups">0</div></div>
+    </div>
+
+    <div class="table-wrap" style="max-height: 68vh; overflow:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:120px;">Time</th>
+            <th style="width:60px;">Cluster</th>
+            <th style="width:80px;">Level</th>
+            <th style="width:220px;">Log Group</th>
+            <th style="width:220px;">Stream</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+let cached = [];
+let auto = false;
+let timer;
+
+function routingQuery() {
+  const p = new URLSearchParams(window.location.search || '');
+  if (!p.has('betaversion')) return '';
+  const v = p.get('betaversion');
+  return v == null || v === '' ? 'betaversion=1' : `betaversion=${encodeURIComponent(v)}`;
+}
+
+function withRouting(url) {
+  const rq = routingQuery();
+  if (!rq) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}${rq}`;
+}
+
+function levelOf(message) {
+  const s = String(message || '').toLowerCase();
+  if (s.includes('error') || s.includes('exception') || s.includes('fatal')) return 'error';
+  if (s.includes('warn')) return 'warn';
+  return 'info';
+}
+
+function safe(v, fallback = '') { return v == null ? fallback : String(v); }
+
+function buildParams() {
+  const params = new URLSearchParams({
+    timeframe: document.getElementById('timeframe').value,
+    cluster: document.getElementById('cluster').value,
+    org: document.getElementById('org').value,
+    user: document.getElementById('user').value,
+    session: document.getElementById('session').value,
+    text: document.getElementById('text').value,
+    level: document.getElementById('level').value,
+    streamPrefix: document.getElementById('streamPrefix').value,
+    logGroup: document.getElementById('logGroup').value,
+    sort: document.getElementById('sort').value,
+    limit: document.getElementById('limit').value,
+  });
+
+  const start = document.getElementById('start').value;
+  const end = document.getElementById('end').value;
+  if (start) params.set('start', new Date(start).toISOString());
+  if (end) params.set('end', new Date(end).toISOString());
+  return params;
+}
+
+async function searchLogs() {
+  const params = buildParams();
+  document.getElementById('status').textContent = 'Searching...';
+
+  const res = await fetch(withRouting(`/api/logs/search?${params.toString()}`));
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+
+  cached = body.events || [];
+  applyClientFilter();
+  document.getElementById('status').textContent = `Loaded ${cached.length} events at ${new Date().toLocaleTimeString()}`;
+}
+
+function applyClientFilter() {
+  const query = document.getElementById('clientFilter').value.trim().toLowerCase();
+  const rows = document.getElementById('rows');
+  rows.innerHTML = '';
+
+  const filtered = cached.filter((e) => {
+    if (!query) return true;
+    const hay = `${safe(e.message)} ${safe(e.logGroup)} ${safe(e.logStream)} ${safe(e.cluster)}`.toLowerCase();
+    return hay.includes(query);
+  });
+
+  let errors = 0;
+  let warns = 0;
+  const groups = new Set();
+
+  filtered.forEach((e) => {
+    const level = levelOf(e.message);
+    if (level === 'error') errors += 1;
+    if (level === 'warn') warns += 1;
+    groups.add(e.logGroup);
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono">${new Date(e.time || e.timestamp).toLocaleTimeString('en-US', { hour12: false })}</td>
+      <td>${safe(e.cluster, '-')}</td>
+      <td><span class="lvl ${level}">${level}</span></td>
+      <td class="mono">${safe(e.logGroup, '-')}</td>
+      <td class="mono">${safe(e.logStream, '-')}</td>
+      <td class="msg mono">${safe(e.message, '-')}</td>
+    `;
+    rows.appendChild(tr);
+  });
+
+  document.getElementById('st-results').textContent = String(filtered.length);
+  document.getElementById('st-errors').textContent = String(errors);
+  document.getElementById('st-warns').textContent = String(warns);
+  document.getElementById('st-groups').textContent = String(groups.size);
+}
+
+function toggleAuto() {
+  auto = !auto;
+  const btn = document.getElementById('live');
+  btn.textContent = auto ? 'Disable Auto Refresh' : 'Enable Auto Refresh';
+  clearInterval(timer);
+
+  if (auto) {
+    timer = setInterval(() => {
+      searchLogs().catch((e) => {
+        document.getElementById('status').textContent = `Auto refresh failed: ${e.message}`;
+      });
+    }, 7000);
+  }
+}
+
+document.getElementById('run').addEventListener('click', () => {
+  searchLogs().catch((e) => {
+    document.getElementById('status').textContent = `Search failed: ${e.message}`;
+  });
+});
+document.getElementById('live').addEventListener('click', toggleAuto);
+document.getElementById('clientFilter').addEventListener('input', applyClientFilter);
+
+searchLogs().catch((e) => {
+  document.getElementById('status').textContent = `Load failed: ${e.message}`;
+});
+</script>
+</body>
+</html>
