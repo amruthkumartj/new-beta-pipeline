@@ -28,14 +28,36 @@ const cwl = new CloudWatchLogsClient({ region: process.env.AWS_REGION });
 //   Get exact name from: ECS Console → Task Definition → Log Configuration
 // ─────────────────────────────────────────────
 router.get('/search', async (req, res) => {
-  const { timeframe = '1h', org, user, session, text, cluster = 'all', limit = 100 } = req.query;
+  const {
+    timeframe = '1h',
+    org,
+    user,
+    session,
+    text,
+    level,
+    streamPrefix,
+    logGroup,
+    start,
+    end,
+    sort = 'desc',
+    cluster = 'all',
+    limit = 100,
+  } = req.query;
 
   const logGroups = [];
-  if (cluster === 'all' || cluster === 'prod') {
-    logGroups.push(process.env.LOG_GROUP_PROD || `/ecs/${process.env.ECS_SERVICE_PROD}`);
-  }
-  if (cluster === 'all' || cluster === 'beta') {
-    logGroups.push(process.env.LOG_GROUP_BETA || `/ecs/${process.env.ECS_SERVICE_BETA}`);
+  if (logGroup) {
+    String(logGroup)
+      .split(',')
+      .map((g) => g.trim())
+      .filter(Boolean)
+      .forEach((g) => logGroups.push(g));
+  } else {
+    if (cluster === 'all' || cluster === 'prod') {
+      logGroups.push(process.env.LOG_GROUP_PROD || `/ecs/${process.env.ECS_SERVICE_PROD}`);
+    }
+    if (cluster === 'all' || cluster === 'beta') {
+      logGroups.push(process.env.LOG_GROUP_BETA || `/ecs/${process.env.ECS_SERVICE_BETA}`);
+    }
   }
 
   const now = Date.now();
@@ -45,7 +67,13 @@ router.get('/search', async (req, res) => {
     '24h': 24 * 60 * 60 * 1000,
     '7d': 7 * 24 * 60 * 60 * 1000,
   };
-  const startTime = now - (timeframeMs[timeframe] || timeframeMs['1h']);
+  const customStart = start ? Number(new Date(String(start)).getTime()) : null;
+  const customEnd = end ? Number(new Date(String(end)).getTime()) : null;
+  const endTime = Number.isFinite(customEnd) ? customEnd : now;
+  const startTime = Number.isFinite(customStart)
+    ? customStart
+    : now - (timeframeMs[timeframe] || timeframeMs['1h']);
+  const safeLimit = Math.max(1, Math.min(Number(limit || 100), 500));
 
   // Build CloudWatch filter pattern from search fields
   // CloudWatch filter syntax: { $.field = "value" } for JSON logs
@@ -55,6 +83,7 @@ router.get('/search', async (req, res) => {
   if (user) patterns.push(`"user=${user}"`);
   if (session) patterns.push(`"session=${session}"`);
   if (text) patterns.push(`"${text}"`);
+  if (level) patterns.push(`"${String(level).toLowerCase()}"`);
 
   // If your logs are JSON, use: { ($.org = "acme") && ($.level = "error") }
   // If plain text, join patterns with space (implicit AND in CW)
@@ -66,14 +95,15 @@ router.get('/search', async (req, res) => {
     for (const logGroup of logGroups) {
       let nextToken;
       let fetched = 0;
-      const groupLimit = Math.ceil(parseInt(limit) / logGroups.length);
+      const groupLimit = Math.ceil(safeLimit / Math.max(logGroups.length, 1));
 
       do {
         const cmd = new FilterLogEventsCommand({
           logGroupName: logGroup,
           startTime,
-          endTime: now,
+          endTime,
           filterPattern: filterPattern || undefined,
+          logStreamNamePrefix: streamPrefix || undefined,
           limit: Math.min(groupLimit - fetched, 50),
           nextToken,
         });
@@ -96,13 +126,27 @@ router.get('/search', async (req, res) => {
       } while (nextToken && fetched < groupLimit);
     }
 
-    // Sort by timestamp descending
-    results.sort((a, b) => b.timestamp - a.timestamp);
+    if (String(sort).toLowerCase() === 'asc') {
+      results.sort((a, b) => a.timestamp - b.timestamp);
+    } else {
+      results.sort((a, b) => b.timestamp - a.timestamp);
+    }
 
-    res.json({ events: results.slice(0, parseInt(limit)), count: results.length });
+    res.json({
+      events: results.slice(0, safeLimit),
+      count: results.length,
+      filters: {
+        timeframe,
+        startTime: new Date(startTime).toISOString(),
+        endTime: new Date(endTime).toISOString(),
+        cluster,
+        logGroups,
+        sort,
+      },
+    });
   } catch (err) {
     console.error('GET /api/logs/search error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(isAccessDenied(err) ? 403 : 500).json({ error: err.message });
   }
 });
 
@@ -156,6 +200,11 @@ router.get('/stream', (req, res) => {
         }
       } catch (err) {
         res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        if (isAccessDenied(err)) {
+          clearInterval(interval);
+          res.end();
+          return;
+        }
       }
     }
   };
@@ -230,5 +279,10 @@ router.post('/insights', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+function isAccessDenied(err) {
+  const message = `${err?.name || ''} ${err?.message || ''}`.toLowerCase();
+  return message.includes('accessdenied') || message.includes('not authorized');
+}
 
 module.exports = router;

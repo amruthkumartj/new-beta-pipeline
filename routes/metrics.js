@@ -29,78 +29,92 @@ router.get('/nodes', async (req, res) => {
   const serviceName = process.env[`ECS_SERVICE_${clusterKey}`];
 
   try {
-    // Get running task ARNs
     const listResp = await ecs.send(
       new ListTasksCommand({ cluster: clusterName, serviceName, desiredStatus: 'RUNNING' })
     );
 
     const taskArns = listResp.taskArns || [];
-    if (taskArns.length === 0) return res.json({ nodes: [] });
+    if (taskArns.length === 0) {
+      return res.json({
+        nodes: [],
+        clusterName,
+        serviceName,
+        warning: 'No RUNNING tasks found for this service.',
+      });
+    }
 
-    // Describe tasks for container-level stats
     const descResp = await ecs.send(
       new DescribeTasksCommand({ cluster: clusterName, tasks: taskArns.slice(0, 50) })
     );
 
-    // Build node list with CPU from task stats
-    // NOTE: Fine-grained per-task CPU comes from Container Insights.
-    // Make sure Container Insights is enabled:
-    //   ECS Console → Clusters → your cluster → Update → Enable Container Insights
-    // Namespace: ECS/ContainerInsights, Metric: CpuUtilized
-    const now = new Date();
-    const startTime = new Date(now.getTime() - 5 * 60 * 1000); // last 5 min
-
-    const queries = descResp.tasks.slice(0, 20).map((task, i) => {
+    const tasks = (descResp.tasks || []).slice(0, 20);
+    const nodes = tasks.map((task, i) => {
       const taskId = task.taskArn.split('/').pop();
       return {
-        Id: `cpu${i}`,
-        Label: taskId.slice(-8),
-        MetricStat: {
-          Metric: {
-            Namespace: 'ECS/ContainerInsights',
-            MetricName: 'CpuUtilized',
-            Dimensions: [
-              { Name: 'ClusterName', Value: clusterName },
-              { Name: 'ServiceName', Value: serviceName },
-              { Name: 'TaskId', Value: taskId },
-            ],
-          },
-          Period: 60,
-          Stat: 'Average',
-        },
+        id: i + 1,
+        label: taskId?.slice(-8) || `task-${i + 1}`,
+        taskId,
+        taskArn: task.taskArn,
+        lastStatus: task.lastStatus,
+        cpu: null,
       };
     });
 
-    const cwResp = await cw.send(
-      new GetMetricDataCommand({
-        MetricDataQueries: queries,
-        StartTime: startTime,
-        EndTime: now,
-      })
-    );
+    let metricWarning = null;
+    if (tasks.length > 0) {
+      try {
+        const now = new Date();
+        const startTime = new Date(now.getTime() - 5 * 60 * 1000);
 
-    const nodes = cwResp.MetricDataResults.map((r, i) => ({
-      id: i + 1,
-      label: r.Label,
-      cpu: r.Values.length > 0 ? Math.round(r.Values[0]) : Math.floor(Math.random() * 60 + 10),
-      taskArn: descResp.tasks[i]?.taskArn,
-      lastStatus: descResp.tasks[i]?.lastStatus,
-    }));
+        const queries = tasks.map((task, i) => {
+          const taskId = task.taskArn.split('/').pop();
+          return {
+            Id: `cpu${i}`,
+            Label: taskId.slice(-8),
+            MetricStat: {
+              Metric: {
+                Namespace: 'ECS/ContainerInsights',
+                MetricName: 'CpuUtilized',
+                Dimensions: [
+                  { Name: 'ClusterName', Value: clusterName },
+                  { Name: 'ServiceName', Value: serviceName },
+                  { Name: 'TaskId', Value: taskId },
+                ],
+              },
+              Period: 60,
+              Stat: 'Average',
+            },
+          };
+        });
 
-    res.json({ nodes, clusterName });
+        const cwResp = await cw.send(
+          new GetMetricDataCommand({
+            MetricDataQueries: queries,
+            StartTime: startTime,
+            EndTime: now,
+          })
+        );
+
+        (cwResp.MetricDataResults || []).forEach((r, i) => {
+          if (nodes[i]) {
+            nodes[i].cpu = r.Values.length > 0 ? Math.round(r.Values[0]) : null;
+          }
+        });
+      } catch (metricErr) {
+        metricWarning = `Unable to read ECS/ContainerInsights CpuUtilized: ${metricErr.message}`;
+      }
+    }
+
+    res.json({
+      nodes,
+      clusterName,
+      serviceName,
+      taskCount: taskArns.length,
+      warning: metricWarning,
+    });
   } catch (err) {
     console.error('GET /api/metrics/nodes error:', err);
-    // Fallback to simulated data when Container Insights not available
-    const count = clusterKey === 'PROD' ? 80 : 100;
-    res.json({
-      nodes: Array.from({ length: count }, (_, i) => ({
-        id: i + 1,
-        cpu: Math.floor(Math.random() * 75) + 10,
-        lastStatus: 'RUNNING',
-      })),
-      clusterName,
-      simulated: true,
-    });
+    res.status(500).json({ error: err.message, clusterName, serviceName });
   }
 });
 
@@ -269,6 +283,115 @@ router.get('/overview', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('GET /api/metrics/overview error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /api/metrics/cluster-series
+// Returns CPU and Memory timeseries for prod and beta clusters.
+// Query:
+//   minutes = lookback window (default 60, max 720)
+//   period  = datapoint period in seconds (default 60)
+// ─────────────────────────────────────────────
+router.get('/cluster-series', async (req, res) => {
+  try {
+    const minutes = Math.max(5, Math.min(Number(req.query.minutes || 60), 720));
+    const period = Math.max(60, Math.min(Number(req.query.period || 60), 3600));
+
+    const now = new Date();
+    const startTime = new Date(now.getTime() - minutes * 60 * 1000);
+
+    const clusters = [
+      {
+        key: 'prod',
+        cluster: process.env.ECS_CLUSTER_PROD,
+        service: process.env.ECS_SERVICE_PROD,
+      },
+      {
+        key: 'beta',
+        cluster: process.env.ECS_CLUSTER_BETA,
+        service: process.env.ECS_SERVICE_BETA,
+      },
+    ];
+
+    const queries = [];
+    clusters.forEach(({ key, cluster, service }) => {
+      if (!cluster || !service) {
+        return;
+      }
+
+      queries.push(
+        {
+          Id: `${key}_cpu`,
+          Label: `${key.toUpperCase()} CPU`,
+          MetricStat: {
+            Metric: {
+              Namespace: 'AWS/ECS',
+              MetricName: 'CPUUtilization',
+              Dimensions: [
+                { Name: 'ClusterName', Value: cluster },
+                { Name: 'ServiceName', Value: service },
+              ],
+            },
+            Period: period,
+            Stat: 'Average',
+          },
+        },
+        {
+          Id: `${key}_mem`,
+          Label: `${key.toUpperCase()} Memory`,
+          MetricStat: {
+            Metric: {
+              Namespace: 'AWS/ECS',
+              MetricName: 'MemoryUtilization',
+              Dimensions: [
+                { Name: 'ClusterName', Value: cluster },
+                { Name: 'ServiceName', Value: service },
+              ],
+            },
+            Period: period,
+            Stat: 'Average',
+          },
+        }
+      );
+    });
+
+    const cwResp = await cw.send(
+      new GetMetricDataCommand({
+        MetricDataQueries: queries,
+        StartTime: startTime,
+        EndTime: now,
+        ScanBy: 'TimestampAscending',
+      })
+    );
+
+    const result = {
+      meta: {
+        minutes,
+        period,
+        startTime: startTime.toISOString(),
+        endTime: now.toISOString(),
+      },
+      prod: { cpu: [], memory: [] },
+      beta: { cpu: [], memory: [] },
+    };
+
+    (cwResp.MetricDataResults || []).forEach((metric) => {
+      const points = (metric.Timestamps || []).map((ts, i) => ({
+        time: new Date(ts).toISOString(),
+        value: metric.Values?.[i] == null ? null : Number(metric.Values[i].toFixed(2)),
+      }));
+
+      if (metric.Id === 'prod_cpu') result.prod.cpu = points;
+      if (metric.Id === 'prod_mem') result.prod.memory = points;
+      if (metric.Id === 'beta_cpu') result.beta.cpu = points;
+      if (metric.Id === 'beta_mem') result.beta.memory = points;
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/metrics/cluster-series error:', err);
     res.status(500).json({ error: err.message });
   }
 });

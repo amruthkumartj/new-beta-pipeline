@@ -134,6 +134,106 @@ router.delete('/:name', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// POST /api/alarms/:name/enable-actions
+// Enables AlarmActions/OKActions execution for one alarm
+// ─────────────────────────────────────────────
+router.post('/:name/enable-actions', async (req, res) => {
+  try {
+    await cw.send(new EnableAlarmActionsCommand({ AlarmNames: [req.params.name] }));
+    res.json({ success: true, alarm: req.params.name, actionsEnabled: true });
+  } catch (err) {
+    console.error('POST /api/alarms/:name/enable-actions error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// POST /api/alarms/:name/disable-actions
+// Disables AlarmActions/OKActions execution for one alarm
+// ─────────────────────────────────────────────
+router.post('/:name/disable-actions', async (req, res) => {
+  try {
+    await cw.send(new DisableAlarmActionsCommand({ AlarmNames: [req.params.name] }));
+    res.json({ success: true, alarm: req.params.name, actionsEnabled: false });
+  } catch (err) {
+    console.error('POST /api/alarms/:name/disable-actions error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /api/alarms/options
+// Returns UI options for alarm setup forms
+// ─────────────────────────────────────────────
+router.get('/options', async (_req, res) => {
+  const ecsProdCluster = process.env.ECS_CLUSTER_PROD;
+  const ecsProdService = process.env.ECS_SERVICE_PROD;
+  const ecsBetaCluster = process.env.ECS_CLUSTER_BETA;
+  const ecsBetaService = process.env.ECS_SERVICE_BETA;
+  const prodTargetGroup = process.env.TARGET_GROUP_PROD_ARN?.split(':').pop() || '';
+  const betaTargetGroup = process.env.TARGET_GROUP_BETA_ARN?.split(':').pop() || '';
+
+  res.json({
+    comparisonOperators: [
+      'GreaterThanThreshold',
+      'GreaterThanOrEqualToThreshold',
+      'LessThanThreshold',
+      'LessThanOrEqualToThreshold',
+    ],
+    statistics: ['Average', 'Maximum', 'Minimum', 'Sum', 'p90', 'p95', 'p99'],
+    periods: [60, 120, 300, 600],
+    evaluationPeriods: [1, 2, 3, 5, 10],
+    recommendedMetrics: [
+      {
+        label: 'ECS CPU Utilization (Prod)',
+        metric: 'CPUUtilization',
+        namespace: 'AWS/ECS',
+        dimensions: [
+          { Name: 'ClusterName', Value: ecsProdCluster },
+          { Name: 'ServiceName', Value: ecsProdService },
+        ],
+      },
+      {
+        label: 'ECS Memory Utilization (Prod)',
+        metric: 'MemoryUtilization',
+        namespace: 'AWS/ECS',
+        dimensions: [
+          { Name: 'ClusterName', Value: ecsProdCluster },
+          { Name: 'ServiceName', Value: ecsProdService },
+        ],
+      },
+      {
+        label: 'ECS CPU Utilization (Beta)',
+        metric: 'CPUUtilization',
+        namespace: 'AWS/ECS',
+        dimensions: [
+          { Name: 'ClusterName', Value: ecsBetaCluster },
+          { Name: 'ServiceName', Value: ecsBetaService },
+        ],
+      },
+      {
+        label: 'ALB 5XX (Prod Target Group)',
+        metric: 'HTTPCode_Target_5XX_Count',
+        namespace: 'AWS/ApplicationELB',
+        dimensions: [{ Name: 'TargetGroup', Value: prodTargetGroup }],
+      },
+      {
+        label: 'ALB 5XX (Beta Target Group)',
+        metric: 'HTTPCode_Target_5XX_Count',
+        namespace: 'AWS/ApplicationELB',
+        dimensions: [{ Name: 'TargetGroup', Value: betaTargetGroup }],
+      },
+      {
+        label: 'ALB Target Response Time (Prod)',
+        metric: 'TargetResponseTime',
+        namespace: 'AWS/ApplicationELB',
+        dimensions: [{ Name: 'TargetGroup', Value: prodTargetGroup }],
+      },
+    ],
+  });
+});
+
+// ─────────────────────────────────────────────
 // POST /api/alarms/presets
 // Creates the standard set of alarms for both clusters at once.
 // Call this once during setup to provision all recommended alarms.

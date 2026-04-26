@@ -45,7 +45,7 @@ router.get('/', async (req, res) => {
 // POST /api/clusters/switch
 // Swaps the ALB listener rule to point ?betaversion at the chosen cluster.
 //
-// Body: { target: "beta" | "prod" }
+// Body: { target: "beta" | "prod", force?: boolean }
 //
 // HOW IT WORKS:
 //  The ALB has TWO listener rules on port 443:
@@ -53,13 +53,14 @@ router.get('/', async (req, res) => {
 //                        → forward to TARGET_GROUP_BETA_ARN
 //   Rule 2 (default):    forward to TARGET_GROUP_PROD_ARN
 //
-//  When you call this endpoint with target="beta", Rule 1 stays as-is.
-//  When you call it with target="prod", we modify Rule 1 to forward to
-//  TARGET_GROUP_PROD_ARN, effectively making ?betaversion hit production too.
-//  (Useful for instant rollback.)
+//  When you call this endpoint with target="beta", Rule 1 routes to beta TG.
+//  When you call it with target="prod", we modify Rule 1 to route to prod TG.
+//
+//  BEFORE switching, we validate the target group has healthy instances.
+//  Pass force=true to skip health checks (emergency rollback only).
 // ─────────────────────────────────────────────
 router.post('/switch', async (req, res) => {
-  const { target } = req.body; // "beta" | "prod"
+  const { target, force } = req.body; // target: "beta" | "prod", force?: bool
   if (!['beta', 'prod'].includes(target)) {
     return res.status(400).json({ error: 'target must be "beta" or "prod"' });
   }
@@ -70,10 +71,24 @@ router.post('/switch', async (req, res) => {
         ? process.env.TARGET_GROUP_BETA_ARN
         : process.env.TARGET_GROUP_PROD_ARN;
 
+    // Pre-flight check: verify target group has healthy instances
+    if (!force) {
+      const healthCheck = await checkTargetGroupHealth(targetGroupArn, target);
+      if (!healthCheck.healthy) {
+        return res.status(503).json({
+          error: `Cannot switch to ${target}: ${healthCheck.reason}`,
+          details: healthCheck.details,
+          healthy: false,
+        });
+      }
+    }
+
+    const betaRuleArn = await resolveBetaRuleArn();
+
     // Modify the existing ?betaversion listener rule to forward to chosen TG
     await albClient.send(
       new ModifyRuleCommand({
-        RuleArn: process.env.ALB_BETA_RULE_ARN,
+        RuleArn: betaRuleArn,
         Actions: [
           {
             Type: 'forward',
@@ -88,9 +103,37 @@ router.post('/switch', async (req, res) => {
       message: `Traffic for ?betaversion now routed to ${target} cluster`,
       target,
       targetGroupArn,
+      healthChecked: !force,
     });
   } catch (err) {
     console.error('POST /api/clusters/switch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /api/clusters/health
+// Pre-flight check: validates target group health before switch
+// ─────────────────────────────────────────────
+router.get('/health', async (req, res) => {
+  try {
+    const betaHealth = await checkTargetGroupHealth(
+      process.env.TARGET_GROUP_BETA_ARN,
+      'beta'
+    );
+    const prodHealth = await checkTargetGroupHealth(
+      process.env.TARGET_GROUP_PROD_ARN,
+      'prod'
+    );
+
+    res.json({
+      beta: betaHealth,
+      prod: prodHealth,
+      canSwitchToBeta: betaHealth.healthy,
+      canSwitchToProd: prodHealth.healthy,
+    });
+  } catch (err) {
+    console.error('GET /api/clusters/health error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -136,12 +179,18 @@ router.get('/target-groups', async (req, res) => {
 // Helpers
 // ─────────────────────────────────────────────
 async function getClusterInfo(clusterName, serviceName) {
-  const [svcResp, clusterResp] = await Promise.all([
-    ecsClient.send(
-      new DescribeServicesCommand({ cluster: clusterName, services: [serviceName] })
-    ),
-    ecsClient.send(new DescribeClustersCommand({ clusters: [clusterName] })),
-  ]);
+  const svcResp = await ecsClient.send(
+    new DescribeServicesCommand({ cluster: clusterName, services: [serviceName] })
+  );
+
+  let clusterResp = { clusters: [] };
+  try {
+    clusterResp = await ecsClient.send(new DescribeClustersCommand({ clusters: [clusterName] }));
+  } catch (err) {
+    if (!isAccessDenied(err)) {
+      throw err;
+    }
+  }
 
   const svc = svcResp.services[0] || {};
   const cluster = clusterResp.clusters[0] || {};
@@ -165,16 +214,70 @@ async function getClusterInfo(clusterName, serviceName) {
   };
 }
 
-async function getCurrentRouting() {
+
+async function checkTargetGroupHealth(targetGroupArn, name) {
   try {
     const resp = await albClient.send(
-      new DescribeRulesCommand({ RuleArns: [process.env.ALB_BETA_RULE_ARN] })
+      new DescribeTargetHealthCommand({ TargetGroupArn: targetGroupArn })
+    );
+
+    const targets = resp.TargetHealthDescriptions || [];
+    const healthy = targets.filter((t) => t.TargetHealth.State === 'healthy');
+    const unhealthy = targets.filter((t) => t.TargetHealth.State !== 'healthy');
+
+    const isHealthy = healthy.length > 0;
+
+    return {
+      cluster: name,
+      targetGroupArn,
+      healthy: isHealthy,
+      healthyCount: healthy.length,
+      unhealthyCount: unhealthy.length,
+      totalCount: targets.length,
+      reason: isHealthy
+        ? `${healthy.length}/${targets.length} targets healthy`
+        : `No healthy targets (${unhealthy.length} unhealthy)`,
+      details: {
+        healthy: healthy.map((t) => ({
+          id: t.Target?.Id,
+          port: t.Target?.Port,
+          state: t.TargetHealth.State,
+        })),
+        unhealthy: unhealthy.map((t) => ({
+          id: t.Target?.Id,
+          port: t.Target?.Port,
+          state: t.TargetHealth.State,
+          reason: t.TargetHealth.Reason,
+          description: t.TargetHealth.Description,
+        })),
+      },
+    };
+  } catch (err) {
+    return {
+      cluster: name,
+      targetGroupArn,
+      healthy: false,
+      reason: `Failed to check health: ${err.message}`,
+      error: err.message,
+    };
+  }
+}
+
+function isAccessDenied(err) {
+  const message = `${err?.name || ''} ${err?.message || ''}`.toLowerCase();
+  return message.includes('accessdenied') || message.includes('not authorized');
+}
+async function getCurrentRouting() {
+  try {
+    const betaRuleArn = await resolveBetaRuleArn();
+    const resp = await albClient.send(
+      new DescribeRulesCommand({ RuleArns: [betaRuleArn] })
     );
     const rule = resp.Rules[0];
     const action = rule?.Actions[0];
     const currentTgArn = action?.TargetGroupArn || '';
     return {
-      ruleArn: process.env.ALB_BETA_RULE_ARN,
+      ruleArn: betaRuleArn,
       currentTargetGroupArn: currentTgArn,
       routingTo:
         currentTgArn === process.env.TARGET_GROUP_BETA_ARN ? 'beta' : 'prod',
@@ -182,6 +285,45 @@ async function getCurrentRouting() {
   } catch (err) {
     return { error: err.message };
   }
+}
+
+async function resolveBetaRuleArn() {
+  const explicitRuleArn = process.env.ALB_BETA_RULE_ARN;
+  if (explicitRuleArn && explicitRuleArn.includes(':listener-rule/')) {
+    return explicitRuleArn;
+  }
+
+  const listenerArn = process.env.ALB_BETA_LISTENER_ARN;
+  if (!listenerArn || !listenerArn.includes(':listener/')) {
+    throw new Error(
+      'ALB beta rule configuration missing. Set ALB_BETA_RULE_ARN (listener-rule ARN) or ALB_BETA_LISTENER_ARN (listener ARN).'
+    );
+  }
+
+  const resp = await albClient.send(new DescribeRulesCommand({ ListenerArn: listenerArn }));
+  const rules = resp.Rules || [];
+
+  const betaRule = rules.find((rule) =>
+    (rule.Conditions || []).some((condition) => {
+      if (condition.Field !== 'query-string') {
+        return false;
+      }
+      const values = condition.QueryStringConfig?.Values || [];
+      return values.some(
+        (v) =>
+          (v.Key && v.Key.toLowerCase() === 'betaversion') ||
+          (v.Value && v.Value.toLowerCase() === 'betaversion')
+      );
+    })
+  );
+
+  if (!betaRule?.RuleArn) {
+    throw new Error(
+      'Unable to find ALB listener rule for query-string betaversion on ALB_BETA_LISTENER_ARN.'
+    );
+  }
+
+  return betaRule.RuleArn;
 }
 
 module.exports = router;
