@@ -29,6 +29,11 @@ codebuild-project.json
 codebuild-s3-policy.json
 ecr-policy.json
 builds.txt
+assume-role-policy.json
+event-pattern.json
+pipeline-policy.json
+pipeline-source-stage.json
+pipeline-updated.json
 
 # App source should stay outside this GitHub IaC repo
 deploy-watch/
